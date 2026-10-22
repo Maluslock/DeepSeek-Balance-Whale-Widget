@@ -9,6 +9,43 @@
 
 DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图 + **今日 Token + DeepSeek 计价金额** + 每轮对话消耗，并且**泡泡内容可以完全自定义**（点击序列、模块化排版、并列加权出泡、随机语句/随机图片）。标准 DSH bundle 插件，`dsh plugin` 一键安装，无需任何会话令牌。
 
+## 这个 Fork 做了什么（相对上游 v0.4.2）
+
+这是 [`MeteorNOX/DeepSeek-Balance-Whale-Widget`](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) 的 fork，主要针对 **fnOS 桌面反代环境** 和 **以 token 用量为中心的显示**。宿主 `lib/index.js`、`lib/accounting.mjs`、定价表、账本格式都没有改；改动集中在 `assets/whale-widget.js` 前端。
+
+### 1. 主显示改为「今日 Token + 仅 DeepSeek 金额」
+
+- 原来大数字是 DeepSeek 余额，副标题是「今日已用」；现在大数字是**今天所有模型事件的总 token 数**，副标题是 **`DeepSeek ¥ x.xx`**。
+- token 数来自 `/dsh-whale/usage-records.json` 的 `all.events`：过滤 `event.day === today.date`，累加每条 `tokens`；金额只累加 `model` 匹配 `/deepseek/i` 的 `event.cost`，所以非 DeepSeek 渠道的 token 计入总数、金额不计入。
+- 余额接口失败（未配置 `DEEPSEEK_API_KEY`、DSH 账号未登录等）时，挂件**不再显示 `--`**；token 数据和余额接口相互独立。
+- token 数字格式：小于 1 万显示原数，大于等于 1 万显示「万」，大于等于 1 亿显示「亿」；鼠标悬停的 `title` 会给出精确 token 数和 DeepSeek 金额。
+- 这里的 token 是宿主记账口径的 `input + cache + output`；金额使用宿主在事件发生时按**峰谷定价**算好的 `cost`，所以中转模型 `cn:deepseek-v4.1-flash` 与官方 DeepSeek 模型走同一套识别规则。
+
+### 2. 默认泡泡和每轮消耗泡泡
+
+- 首次点击泡泡改为：`今日 Token` + token 数 + `DeepSeek ¥ x.xx` + 原有峰谷模块；不再显示余额和「今日已用」。
+- 每轮对话消耗泡泡的第三行从「今日已用 ¥…」改为「今日 Token …」。
+- 新增模板占位符 `{token_ds}`（今日全部模型 token）和 `{cost_ds}`（今日 DeepSeek 计价金额），模块库里的「今日 Token」可直接使用。
+- 已保存的旧 `usage-settings.json` 会在前端加载时自动迁移：只把 `turnCost.lines` 里 `type=today` 且文案含「今日已用」的模块改成「今日 Token {token_ds}」，不改其它设置。
+
+### 3. 适配 fnOS `/app/<app>/` 子路径
+
+- 原来资源请求写死绝对路径 `/dsh-whale/...`；在 `https://host/app/fn-deepseek-harness/` 下会请求到 `https://host/dsh-whale/...`，全部 404。
+- 现在 `DSHW_ROOT` 会从页面路径里的 `/app/<应用名>/` 前缀推导（取不到时回退到 `widget.js` 的 `src`），`dshwUrl()` 自动给所有 `/dsh-whale/*` 请求加上应用前缀；直连根路径 `/` 的部署保持原行为。
+
+### 4. 轮询防堆积
+
+- `wait.json` / `last-turn.json` 轮询增加在途锁，避免上一个请求未返回就继续发下一个。
+- 新增 `fetchPoll()`：5 秒 `AbortController` 超时；`document.hidden` 时暂停轮询。
+- 这部分只改前端，不改变宿主 API；解决浏览器标签页长时间打开、网络抖动时请求队列堆积导致的 `--`。
+
+### 5. 版本与已知限制
+
+- fork 版本：`0.4.3-fnos.1`。
+- 只改前端资源，宿主 `lib/index.js` 不需要重启；更新后浏览器 `Ctrl+F5` 或强刷即可。
+- 已知限制：`/dsh-whale/usage-records.json` 的 `all.events` 只返回最近 500 条事件；如果单日事件数超过 500，token 可能低估（前端保留 `tokenPartial` 标记，后续可以补 UI 提示）。
+- 没有改：余额获取逻辑、账本结构、DeepSeek 定价表、宿主路由和历史数据；上游的 MIT 许可与 `PROVENANCE.md` 素材说明保持不变。
+
 > ⚠️ **Codex 版小鲸鱼已迁至独立仓库** → <https://github.com/Yang-huai406/Codex-Whale-Public>（**已安装用户无需重装**；详见下方「两条分支怎么选」）
 <!-- 迁移横幅（v0.3.19 起）：迁移稳定后（约 2026-11，或发过 1–2 个版本）可只删这一行 blockquote，保留下方分支表与「致谢」——别让它长期占着第一屏 -->
 
