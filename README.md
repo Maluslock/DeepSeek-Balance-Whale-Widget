@@ -2,7 +2,12 @@
 
 ![DSH 小鲸鱼记账挂件](assets/DSH2.png)
 
-DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图 + DeepSeek API 余额 + 今日已用 + 每轮对话消耗，并且**泡泡内容可以完全自定义**（点击序列、模块化排版、并列加权出泡、随机语句/随机图片）。标准 DSH bundle 插件，`dsh plugin` 一键安装，无需任何会话令牌。
+> **Maluslock fork（基于上游 `MeteorNOX/DeepSeek-Balance-Whale-Widget` v0.4.2）**
+>
+> 本分支的默认主显示改为「今日 Token + 仅 DeepSeek 模型按官方峰谷价计算的金额」，余额接口不可用时不再把挂件打成 `--`；并适配 fnOS 桌面反代 `/app/<app>/` 子路径（自动把 `/dsh-whale/*` 接口请求加上应用前缀）。
+> 上游代码与美术素材归属不变，许可范围见 `LICENSE` 与 `PROVENANCE.md`。
+
+DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图 + **今日 Token + DeepSeek 计价金额** + 每轮对话消耗，并且**泡泡内容可以完全自定义**（点击序列、模块化排版、并列加权出泡、随机语句/随机图片）。标准 DSH bundle 插件，`dsh plugin` 一键安装，无需任何会话令牌。
 
 > ⚠️ **Codex 版小鲸鱼已迁至独立仓库** → <https://github.com/Yang-huai406/Codex-Whale-Public>（**已安装用户无需重装**；详见下方「两条分支怎么选」）
 <!-- 迁移横幅（v0.3.19 起）：迁移稳定后（约 2026-11，或发过 1–2 个版本）可只删这一行 blockquote，保留下方分支表与「致谢」——别让它长期占着第一屏 -->
@@ -13,7 +18,7 @@ DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图
 
 | 你要挂在哪 | 用哪条分支 | 安装方式 |
 |---|---|---|
-| **DSH Web 界面右下角**（就是这个 README 描述的插件） | `main`（默认分支） | `dsh plugin --profile web add dsh-whale-widget`（推荐，装 npm 已发布版）；也可以从本仓库装 `dsh plugin --profile web add github:MeteorNOX/DeepSeek-Balance-Whale-Widget`，但那样装的是 **main 当前状态、不跟随已发布版本** |
+| **DSH Web 界面右下角**（就是这个 README 描述的插件） | `main`（默认分支） | `dsh plugin --profile web add github:Maluslock/DeepSeek-Balance-Whale-Widget`（本 fork，装 `main` 当前状态；上游 npm 已发布版不含本 fork 改动） |
 | **官方桌面客户端（Electron）右下角** | `main`（同一个包） | ⚠️ **不能用** `--profile web`（桌面端读的是 `desktop` profile，CLI 也拒绝 `--profile desktop`）—— 在桌面端会话里**让 DSH 自己装**，见下方「官方桌面端（Electron 客户端）请先看这一节」 |
 | **Codex 桌面应用**（跟随 Codex 窗口、无独立网页） | ⚠️ **已迁出本仓库** | [新仓库](https://github.com/Yang-huai406/Codex-Whale-Public) · [最新版下载](https://github.com/Yang-huai406/Codex-Whale-Public/releases/latest) · **已安装用户无需重装**<br>**Codex 版迁移公告**：本次迁移保留了**开发历史、历代版本与作者贡献**，并清理了旧图片中的非必要元数据（贡献者致谢见文末「致谢」）。后续更新、问题反馈与版本发布都在新仓库；反馈问题时请注明**版本、系统和复现步骤**，勿上传密钥、完整配置或未脱敏日志。 |
 
@@ -223,7 +228,7 @@ dsh plugin --profile web add link:D:\Plugins\dsh-whale-widget
 无需本地克隆，一条命令安装：
 
 ```powershell
-dsh plugin --profile web add github:MeteorNOX/DeepSeek-Balance-Whale-Widget
+dsh plugin --profile web add github:Maluslock/DeepSeek-Balance-Whale-Widget
 ```
 
 说明：
@@ -231,7 +236,7 @@ dsh plugin --profile web add github:MeteorNOX/DeepSeek-Balance-Whale-Widget
 - 装完后插件会出现在 DSH 的**插件管理页面**里，之后可以直接在页面里更新，无需再手动执行命令
 - 网络环境需要代理时，先设置代理环境变量再执行：
   ```powershell
-  $env:http_proxy="http://<ip>:<port>"; $env:https_proxy="http://<ip>:<port>"; $env:all_proxy="socks5://<ip>:<port>"; dsh plugin --profile web add github:MeteorNOX/DeepSeek-Balance-Whale-Widget
+  $env:http_proxy="http://<ip>:<port>"; $env:https_proxy="http://<ip>:<port>"; $env:all_proxy="socks5://<ip>:<port>"; dsh plugin --profile web add github:Maluslock/DeepSeek-Balance-Whale-Widget
   ```
 - 安装完成后重启 `dsh web`，再 F5 刷新浏览器
 
@@ -275,7 +280,7 @@ MeteorNOX/DeepSeek-Balance-Whale-Widget，或者我本地已经有这个插件�
 2. 在 Web profile 安装（按我实际拿到的来源任选一种）：
 
    【来源一：从 GitHub 安装】
-     dsh plugin --profile web add github:MeteorNOX/DeepSeek-Balance-Whale-Widget
+     dsh plugin --profile web add github:Maluslock/DeepSeek-Balance-Whale-Widget
    或从本地 git 仓库链接安装：
      dsh plugin --profile web add link:<仓库绝对路径>
    （注意：仓库根目录就是插件包，不要写成 link:.\dsh-whale-widget 这种带子目录的路径）

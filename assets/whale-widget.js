@@ -1,6 +1,35 @@
 (function () {
 if (window.__dshWhaleWidget) return
 window.__dshWhaleWidget = true
+// —— 部署基路径：兼容 fnOS 桌面 /app/<app>/ 反代与直连 / ——
+// 之前所有资源都写成绝对 /dsh-whale/...，在 /app/fn-deepseek-harness/ 下会
+// 解析到 https://host/dsh-whale/...（404）。这里以 widget.js 自身 URL 为基准；
+// 脚本被内联注入时退回页面里的 /app/<app>/ 前缀。
+var DSHW_ROOT = (function () {
+  // 先看页面自身是否在 fnOS 的 /app/<app>/ 前缀下。即便 widget.js 被反代成
+  // 根路径 /dsh-whale/widget.js 加载，内部接口也必须走 /app/<app>/dsh-whale/。
+  var m = location.pathname.match(/^(.*\/app\/[^/]+)(?:\/|$)/)
+  if (m) return m[1] + '/dsh-whale/'
+  try {
+    var s = document.currentScript
+    if (!s || !s.src) {
+      var list = document.getElementsByTagName('script')
+      for (var i = list.length - 1; i >= 0; i--) {
+        if (list[i].src && /\/dsh-whale\/widget\.js(?:[?#]|$)/.test(list[i].src)) { s = list[i]; break }
+      }
+    }
+    if (s && s.src) {
+      var u = new URL(s.src, location.href)
+      return u.pathname.replace(/\/widget\.js$/, '/')
+    }
+  } catch (err) {}
+  return '/dsh-whale/'
+})()
+function dshwUrl(p) {
+  var s = String(p == null ? '' : p)
+  if (/^https?:\/\//i.test(s)) return s
+  return DSHW_ROOT + s.replace(/^\/?dsh-whale\//, '')
+}
 
 // —— 页面自检：只在 DSH 主聊天界面挂载挂件 ——
 // 挂件脚本通过 tapIndex 注入 DSH 的每一个 index 页面（含插件市场等 SPA 视图）。
@@ -353,11 +382,11 @@ var CHANGE_MS = 900
 var ANIM_MS = 700
 var BUBBLE_MS = 5000
 var FETCH_TIMEOUT_MS = 25000
-var BALANCE_URL = '/dsh-whale/balance.json'
-var SIZE_URL = '/dsh-whale/size.json'
-var IMG_URL = '/dsh-whale/image.png?v=2'
-var GIF_URL = '/dsh-whale/rua.gif'
-var BUBBLE_URL = '/dsh-whale/bubble.json'
+var BALANCE_URL = dshwUrl('/dsh-whale/balance.json')
+var SIZE_URL = dshwUrl('/dsh-whale/size.json')
+var IMG_URL = dshwUrl('/dsh-whale/image.png?v=2')
+var GIF_URL = dshwUrl('/dsh-whale/rua.gif')
+var BUBBLE_URL = dshwUrl('/dsh-whale/bubble.json')
 
 // ===== v815：自定义泡泡框 —— 常量必须在**泡泡构建之前**就绪 =====
 // ⚠️ 血的教训（v815 首版把这些常量写在 13000 行附近，而泡泡在 12600 行就调渲染器了）：
@@ -1342,10 +1371,10 @@ img.className = 'dshwv-img'
 var initRoleUrl = IMG_URL
 try {
   var initRoleId = localStorage.getItem('dshw-role') || ''
-  if (initRoleId && initRoleId !== 'default') initRoleUrl = '/dsh-whale/role-image.png?id=' + encodeURIComponent(initRoleId)
+  if (initRoleId && initRoleId !== 'default') initRoleUrl = dshwUrl('/dsh-whale/role-image.png?id=') + encodeURIComponent(initRoleId)
 } catch (err) {}
 img.src = initRoleUrl
-img.alt = 'DeepSeek 余额'
+img.alt = '今日 Token'
 img.draggable = false
 
 var menuBtn = document.createElement('button')
@@ -1928,7 +1957,7 @@ function playTaskEndSound(opts) {
     var url = ''
     var altUrl = ''
     if (sel.indexOf('grp:') === 0) { playTaskEndGroupClick(sel.slice(4), o.vol); return }
-    if (sel.indexOf('frag:') === 0) url = '/dsh-whale/audio-fragment?id=' + encodeURIComponent(sel.slice(5))
+    if (sel.indexOf('frag:') === 0) url = dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(sel.slice(5))
     else if (sel.indexOf('preset:') === 0) {
       // v752：预设片段也改走片段路由（与本体按压同一套选择逻辑 + 备用路由）
       var parts = sel.split(':')
@@ -2227,15 +2256,27 @@ menuBox.appendChild(rowRes)
 // —— 用量记录:底部固定动作行由「用量记录 / ‹ 返回」共用(见下方 nav 行) ——
 
 // ===== 用量记录(主菜单内的子界面,不跳新页面)+ “更多消费记录”窗口 =====
-var USAGE_REC_URL = '/dsh-whale/usage-records.json'
+var USAGE_REC_URL = dshwUrl('/dsh-whale/usage-records.json')
 var usageSet = null // {taskEnd,alert,budget} 用量设置缓存
-var USAGE_SET_URL = '/dsh-whale/usage-settings.json'
+function normalizeUsageSettings(s) {
+  try {
+    var tc = s && s.turnCost
+    if (tc && Array.isArray(tc.lines)) {
+      for (var i = 0; i < tc.lines.length; i++) {
+        var m = tc.lines[i] || {}
+        if (m.type === 'today' && /今日已用/.test(String(m.tpl || ''))) m.tpl = '今日 Token {token_ds}'
+      }
+    }
+  } catch (err) {}
+  return s
+}
+var USAGE_SET_URL = dshwUrl('/dsh-whale/usage-settings.json')
 function loadUsageSettings(cb) {
   try {
     fetch(USAGE_SET_URL, { cache: 'no-store' })
       .then(function (r) { return r.json() })
       .then(function (d) {
-        if (d && d.ok && d.settings) usageSet = d.settings
+        if (d && d.ok && d.settings) usageSet = normalizeUsageSettings(d.settings)
         // 顺带拉一次自定义 API 模型（余额/今日已用/额度/各模型提醒）
         try { loadApiModels(null, true) } catch (err) {}
         if (cb) cb()
@@ -2258,7 +2299,7 @@ function usageSettingsPut(patch, retried) {
     })
     .then(function (x) {
       if (x.ok && (!x.d || x.d.ok !== false)) {
-        if (x.d && x.d.settings) usageSet = x.d.settings
+        if (x.d && x.d.settings) usageSet = normalizeUsageSettings(x.d.settings)
         return true
       }
       if (!retried) return new Promise(function (res) { setTimeout(function () { res(usageSettingsPut(patch, true)) }, 900) })
@@ -2509,7 +2550,7 @@ function aboutUpdateRow(label, text, cls) {
 // v805（用户要求）：只刷新"挂件已运行"这一行 —— 重新读一次 about.json，但**不重画整个面板**
 function aboutRefreshUptimeRow() {
   if (aboutRows['挂件已运行'] && aboutRows['挂件已运行'].val) aboutUpdateRow('挂件已运行', '刷新中…')
-  return fetch('/dsh-whale/about.json', { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) {
+  return fetch(dshwUrl('/dsh-whale/about.json'), { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) {
     if (!d || !d.ok) { aboutUpdateRow('挂件已运行', '刷新失败'); return }
     aboutData = d
     aboutUpdateRow('挂件已运行', aboutFmtUptime(d.runtime && d.runtime.uptimeSec))
@@ -2905,7 +2946,7 @@ function aboutLoad(force) {
   if (!force && aboutData) { aboutRender(); aboutAutoProbe(); return }
   el.innerHTML = ''
   el.appendChild(aboutEl('div', 'dshwv-about-note', '读取中…'))
-  fetch('/dsh-whale/about.json', { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) {
+  fetch(dshwUrl('/dsh-whale/about.json'), { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) {
     aboutData = d && d.ok ? d : null
     if (!aboutData) { el.innerHTML = ''; el.appendChild(aboutEl('div', 'dshwv-about-note', '读取失败：' + ((d && d.error) || '未知错误'))); return }
     aboutRender()
@@ -2925,7 +2966,7 @@ function aboutAutoProbe() {
   } catch (err) {}
 }
 function aboutSelfCheck() {
-  var targets = ['/dsh-whale/size.json', '/dsh-whale/wait.json']
+  var targets = [dshwUrl('/dsh-whale/size.json'), dshwUrl('/dsh-whale/wait.json')]
   aboutSelfResult = '检查中…'
   aboutSelfDetail = ''
   // v805：只更新「自检」这一行，不重画整个面板（重画会丢滚动位置、也会闪一下）
@@ -2958,7 +2999,7 @@ function aboutCheckUpdate() {
   aboutCheckAt = Date.now()
   // v805：只更新「检查更新」这一行（不重画整个面板）
   if (!aboutUpdateRow('检查更新', '检查中…')) aboutRender()
-  fetch('/dsh-whale/update-check.json', { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) {
+  fetch(dshwUrl('/dsh-whale/update-check.json'), { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) {
     // v805（用户要求）：来源**不显示在行里**，只留在 aboutUpdateSource 里，随「复制诊断信息」一起带出去
     aboutUpdateSource = (d && d.source) ? String(d.source) : ''
     if (!d || !d.ok) aboutLastUpdate = '检查失败：' + ((d && d.error) || '未知错误')
@@ -4721,7 +4762,7 @@ function apiModelsFetch(tries) {
   var opts = { cache: 'no-store' }
   // 兜底超时：host 要串行取各厂商余额，慢的时候不能把界面一直吊着
   try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(40000) } catch (err) {}
-  fetch('/dsh-whale/api-models.json', opts)
+  fetch(dshwUrl('/dsh-whale/api-models.json'), opts)
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
     .then(function (d) {
       if (d && d.ok && Array.isArray(d.models)) {
@@ -4763,7 +4804,7 @@ function postApiModels(body, cb) {
   }
   // 与 apiModelsFetch 一致：补超时，避免后端卡住时请求永不落地（保存按钮一直"保存中…"）
   try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(40000) } catch (err) {}
-  fetch('/dsh-whale/api-models.json', opts)
+  fetch(dshwUrl('/dsh-whale/api-models.json'), opts)
     .then(function (r) { return r.json() })
     .then(function (d) {
       if (d && Array.isArray(d.models)) apiModels = d.models
@@ -5882,7 +5923,7 @@ function refreshUsageMain() {
   fetch(USAGE_REC_URL, { cache: 'no-store' })
     .then(function (r) { return r.json() })
     .then(function (d) {
-      if (d && d.ok && d.settings) usageSet = d.settings
+      if (d && d.ok && d.settings) usageSet = normalizeUsageSettings(d.settings)
       // 面板打开时顺带刷新自定义模型（余额/今日已用/额度）；force 才会真的重新请求
       try { loadApiModels(null, true) } catch (err) {}
       fillUsagePanel(d)
@@ -5924,7 +5965,7 @@ var accountingMask = null
 function openBalanceAdjustment(modelId) {
   // 只有固定的 DeepSeek（内置）能打开：入口由宿主下发的 canAdjustBalance 控制，这里再挡一次
   if (!apiCanAdjustBalance(apiModelById(modelId)) || accountingMask) return
-  var adjustmentUrl = '/dsh-whale/balance-adjustments.json?modelId=' + encodeURIComponent(modelId)
+  var adjustmentUrl = dshwUrl('/dsh-whale/balance-adjustments.json?modelId=') + encodeURIComponent(modelId)
   closeApiModelPanel()
   // 与「额度」「余额预警 / 今日预算」等窗口共用同一套骨架与样式：
   // dshwv-usage-mask + dshwv-usage-card + dshwv-bubtitle/bubhint + apiPanelRow/apiTextInput + dshwv-bubbtns
@@ -6456,7 +6497,7 @@ function resPlayFragment(fid) {
   try {
     if (!fid) return
     if (resAudEl) { try { resAudEl.pause() } catch (err) {} resAudEl = null }
-    var a = dshwvSound('/dsh-whale/audio-fragment?id=' + encodeURIComponent(fid))
+    var a = dshwvSound(dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(fid))
     // v778：资源窗口的片段试听也走音量解析器（它是"这一条片段本身的试听"，与按压音量同源）
     try { a.volume = soundVolumeOf('press') } catch (err) {}
     a.onended = function () { resAudEl = null }
@@ -6505,13 +6546,13 @@ function resManagerRender() {
     }
     function fail() { fin() }
     try {
-      fetch('/dsh-whale/roles.json', { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) { if (d && d.ok && Array.isArray(d.roles)) roles = d.roles; fin() }).catch(fail)
+      fetch(dshwUrl('/dsh-whale/roles.json'), { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) { if (d && d.ok && Array.isArray(d.roles)) roles = d.roles; fin() }).catch(fail)
     } catch (err) { fin() }
     try {
-      fetch('/dsh-whale/bubble-imgs.json', { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) { if (d && d.ok && Array.isArray(d.images)) bubbleImgs = d.images; fin() }).catch(fail)
+      fetch(dshwUrl('/dsh-whale/bubble-imgs.json'), { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) { if (d && d.ok && Array.isArray(d.images)) bubbleImgs = d.images; fin() }).catch(fail)
     } catch (err) { fin() }
     try {
-      fetch('/dsh-whale/audio.json', { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) { audio = d; fin() }).catch(fail)
+      fetch(dshwUrl('/dsh-whale/audio.json'), { cache: 'no-store' }).then(function (r) { return r.json() }).then(function (d) { audio = d; fin() }).catch(fail)
     } catch (err) { fin() }
   } catch (err) {}
 }
@@ -6520,7 +6561,7 @@ function resDelRole(id) {
   for (var i = 0; i < roleList.length; i++) if (roleList[i].id === id) { r = roleList[i]; break }
   showConfirm('确定删除角色「' + (r ? r.name : id) + '」吗？\n若该角色正被使用,将自动回退默认小鲸鱼。', function () {
     try {
-      fetch('/dsh-whale/role-delete.json', {
+      fetch(dshwUrl('/dsh-whale/role-delete.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: id }),
@@ -6543,7 +6584,7 @@ function resDelBubbleImg(id) {
   for (var i = 0; i < bubbleImgList.length; i++) if (bubbleImgList[i].id === id) { im = bubbleImgList[i]; break }
   showConfirm('确定删除泡泡图「' + (im && im.name ? im.name : id) + '」吗？\n正在引用该图的泡泡行将无法显示。', function () {
     try {
-      fetch('/dsh-whale/bubble-img-upload.json', {
+      fetch(dshwUrl('/dsh-whale/bubble-img-upload.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', id: id }),
@@ -6564,7 +6605,7 @@ function resDelAudioGroup(id) {
   for (var i = 0; i < (audioGroups || []).length; i++) if (audioGroups[i].id === id) { g = audioGroups[i]; break }
   showConfirm('确定删除音效组「' + (g && g.name ? g.name : id) + '」吗？', function () {
     try {
-      fetch('/dsh-whale/audio.json', {
+      fetch(dshwUrl('/dsh-whale/audio.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete-group', id: id }),
@@ -6588,7 +6629,7 @@ function resDelAudioFrag(id) {
   for (var i = 0; i < (audioFragments || []).length; i++) if (audioFragments[i].id === id) { f = audioFragments[i]; break }
   showConfirm('确定删除音频片段「' + (f && f.name ? f.name : id) + '」吗？\n引用该片段的音效组槽位会自动回退预设。', function () {
     try {
-      fetch('/dsh-whale/audio.json', {
+      fetch(dshwUrl('/dsh-whale/audio.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete-fragment', id: id }),
@@ -6642,7 +6683,7 @@ function resRenderData(wrap, roles, bubbleImgs, audio) {
     bubbleImgs.forEach(function (im) {
       anyImg = true
       var tag = resMkTag(im.builtin ? '内置图' : '泡泡图', !!im.builtin)
-      imgEnt.body.appendChild(resImgRow('/dsh-whale/bubble-img.png?id=' + encodeURIComponent(im.id), im.name || im.id, '', [tag, resMkDel('删除', !!im.builtin, function () { resDelBubbleImg(im.id) })]))
+      imgEnt.body.appendChild(resImgRow(dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(im.id), im.name || im.id, '', [tag, resMkDel('删除', !!im.builtin, function () { resDelBubbleImg(im.id) })]))
     })
     if (!anyImg) {
       var empty = document.createElement('div')
@@ -6718,7 +6759,7 @@ function usageTurnCostDefaultLines() {
   return [
     { type: 'text', text: '上一轮对话消耗:', size: 8, bold: true },
     { type: 'text', text: '¥ {cost}', size: 24, bold: true, color: '#e0433f' },
-    { type: 'today', size: 2, tpl: '今日已用 {expense_ds}', bold: false, rgb: '', color: '#ffffff', bgRgb: 'indigo', bg: '' },
+    { type: 'today', size: 2, tpl: '今日 Token {token_ds}', bold: false, rgb: '', color: '#ffffff', bgRgb: 'indigo', bg: '' },
   ]
 }
 // 每轮消耗提示内容读取:lines[] 优先;无内容 → 默认模板
@@ -6803,7 +6844,7 @@ function usageAppendLine(body, m, below, amount) {
       var imEl2 = document.createElement('img')
       imEl2.alt = ''
       imEl2.draggable = false
-      imEl2.src = '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(imgId2)
+      imEl2.src = dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(imgId2)
       var sc3 = Number(m.imgScale)
       imEl2.style.maxWidth = (isFinite(sc3) && sc3 > 0 ? Math.max(24, Math.round(240 * Math.max(0.1, Math.min(1, sc3)))) : 240) + 'px'
       imEl2.style.maxHeight = '120px'
@@ -7968,7 +8009,7 @@ function bubbleDefaultFirstModules() {
   return [
     {
       type: "text",
-      text: "DeepSeek 余额",
+      text: "今日 Token",
       size: 8,
       bold: true,
       rgb: "",
@@ -7981,13 +8022,13 @@ function bubbleDefaultFirstModules() {
       size: 20,
       rgb: "macaron",
       color: "#203170",
-      tpl: "{balance_ds}"
+      tpl: "{token_ds}"
     },
     {
       type: "today",
       size: 4,
       color: "#9fb0d9",
-      tpl: "今日已用 {expense_ds}"
+      tpl: "DeepSeek {cost_ds}"
     },
     {
       type: "peak",
@@ -8458,7 +8499,7 @@ var BUBBLE_DEFAULT_ITEMS = [
         "modules":  [
                         {
                             "type":  "text",
-                            "text":  "DeepSeek 余额",
+                            "text":  "今日 Token",
                             "size":  8,
                             "bold":  true,
                             "rgb":  "",
@@ -8471,7 +8512,7 @@ var BUBBLE_DEFAULT_ITEMS = [
                             "size":  20,
                             "rgb":  "indigo",
                             "color":  "",
-                            "tpl":  "{balance_ds}",
+                            "tpl":  "{token_ds}",
                             "bgRgb":  "",
                             "bg":  "",
                             "fontFamily":  "",
@@ -8481,7 +8522,7 @@ var BUBBLE_DEFAULT_ITEMS = [
                             "type":  "today",
                             "size":  4,
                             "color":  "#9fb0d9",
-                            "tpl":  "今日已用 {expense_ds}"
+                            "tpl":  "DeepSeek {cost_ds}"
                         },
                         {
                             "type":  "peak",
@@ -10473,7 +10514,7 @@ function renderBubblePal() {
     //   存的是 type/tpl 字面量，改代码名会让老内容显示不出来）；v787 只按用户要求改了**显示文案**。
     { key: 'bonus', label: '赠金', pin: true, cb: function () { bubbleModuleAdd({ type: 'bonus', size: 11, tpl: '{bonus_ds}' }) } },
     { key: 'recharge', label: '充值余额', pin: true, cb: function () { bubbleModuleAdd({ type: 'recharge', size: 11, tpl: '{recharge_ds}' }) } },
-    { key: 'today', label: '今日已用', pin: true, cb: function () { bubbleModuleAdd({ type: 'today', size: 1, tpl: '今日已用 {expense_ds}' }) } },
+    { key: 'today', label: '今日 Token', pin: true, cb: function () { bubbleModuleAdd({ type: 'today', size: 1, tpl: '今日 Token {token_ds}' }) } },
     { key: 'peak', label: '峰谷时段', pin: true, cb: function () { bubbleModuleAdd({ type: 'peak', size: 4, peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{status}' }) } },
     { key: 'nextpeak', label: '时段倒计时', pin: true, cb: function () { bubbleModuleAdd({ type: 'peak', size: 6, bold: true, peakStyle: 'count', peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{countdown}' }) } },
     // v768：对话名模块（内容 = 当前对话标题；「保留长度」可在模块编辑器里改）
@@ -10799,7 +10840,7 @@ function bubblePaletteModule(key) {
   // v782：赠金 / 充值余额（拖拽路径；与上面「总余额(充值金额+赠金)」并列的两个内置数值模块）
   if (key === 'bonus') return { type: 'bonus', size: 11, tpl: '{bonus_ds}' }
   if (key === 'recharge') return { type: 'recharge', size: 11, tpl: '{recharge_ds}' }
-  if (key === 'today') return { type: 'today', size: 1, tpl: '今日已用 {expense_ds}' }
+  if (key === 'today') return { type: 'today', size: 1, tpl: '今日 Token {token_ds}' }
   if (key === 'peak') return { type: 'peak', size: 4, peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{status}' }
   if (key === 'nextpeak') return { type: 'peak', size: 6, bold: true, peakStyle: 'count', peakColor: '#e0433f', offColor: '#2fa24c', tpl: '{countdown}' }
   if (key === 'session') return { type: 'session', size: 4, bold: true, tpl: '{session}', len: WAIT_SESSION_MAX }
@@ -11957,7 +11998,7 @@ var moduleImgPreviewEl = null
 var bubbleImgList = []
 function loadBubbleImgs(cb) {
   try {
-    fetch('/dsh-whale/bubble-imgs.json', { cache: 'no-store' })
+    fetch(dshwUrl('/dsh-whale/bubble-imgs.json'), { cache: 'no-store' })
       .then(function (r) { return r.json() })
       .then(function (d) {
         if (d && d.ok && Array.isArray(d.images)) { bubbleImgList = d.images; if (cb) cb() }
@@ -11971,7 +12012,7 @@ function bubbleUploadImg(file, cb) {
     fr.onload = function () {
       var data = String(fr.result || '')
       if (data.indexOf('data:image/png;base64,') !== 0 && data.indexOf('data:image/gif;base64,') !== 0) { if (cb) cb(false); return }
-      fetch('/dsh-whale/bubble-img-upload.json', {
+      fetch(dshwUrl('/dsh-whale/bubble-img-upload.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'upload', name: file.name || '', data: data }),
@@ -12773,7 +12814,7 @@ function renderModuleEditor() {
     }
     moduleImgSelect.addEventListener('change', function () {
       m.imgId = moduleImgSelect.value
-      if (m.imgId) { moduleImgPreviewEl.src = '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(m.imgId); moduleImgPreviewEl.style.display = 'block' }
+      if (m.imgId) { moduleImgPreviewEl.src = dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(m.imgId); moduleImgPreviewEl.style.display = 'block' }
       else moduleImgPreviewEl.style.display = 'none'
     })
     var fileInput = document.createElement('input')
@@ -12899,7 +12940,7 @@ function renderModuleEditor() {
           function syncTh2() {
             try {
               // 未选图时保留空占位(带底色/边框),避免该行尾部宽度变化导致表头列错位
-              if (it2.imgId) th2.src = '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(it2.imgId)
+              if (it2.imgId) th2.src = dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(it2.imgId)
               else th2.removeAttribute('src')
               th2.style.display = 'block'
             } catch (err) {}
@@ -13844,7 +13885,7 @@ var textBox = document.createElement('div')
 textBox.className = 'dshwv-text'
 var labelEl = document.createElement('div')
 labelEl.className = 'dshwv-label'
-labelEl.textContent = 'DeepSeek 余额'
+labelEl.textContent = '今日 Token'
 var amountEl = document.createElement('div')
 amountEl.className = 'dshwv-amount'
 var hintEl = document.createElement('div')
@@ -14033,6 +14074,12 @@ var state = {
   todayUsage: null,
   todayUsageCurrency: 'CNY',
   usageLabel: '本地估算',
+  // 今日 Token / DeepSeek 计价（由 /dsh-whale/usage-records.json 的 events 聚合）
+  todayTokens: null,
+  todayTokenCost: null,
+  todayTokenDay: '',
+  tokenStatus: 'loading',
+  tokenPartial: false,
   isPeak: false,
   peakNextChangeAt: null,
   peakHolidays: null,
@@ -14261,7 +14308,7 @@ function restoreBubbleLines() {
   // 后续 setHint 首次直写分支不碰 opacity → 今日已用整行透明消失。
   labelEl.style.display = ''
   labelEl.className = 'dshwv-label'
-  labelEl.textContent = 'DeepSeek 余额'
+  labelEl.textContent = '今日 Token'
   labelEl.style.color = ''
   labelEl.style.opacity = ''
   amountEl.style.display = ''
@@ -14645,7 +14692,7 @@ function frameImageGeom(box, dx, dy, sc, slot) {
     var h = b.h * s * sc2
     var x = b.x * s + (b.x + b.w / 2) * (1 - s) + ox + (b.w * s * (1 - sc2)) / 2
     var y = b.y * s + (b.y + b.h / 2) * (1 - s) + oy + (b.h * s * (1 - sc2)) / 2
-    var url = '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(String(slot && slot.imgId ? slot.imgId : ''))
+    var url = dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(String(slot && slot.imgId ? slot.imgId : ''))
     return ' href="' + url + '" x="' + frameNumStr(x) + '" y="' + frameNumStr(y) + '"' +
       ' width="' + frameNumStr(w) + '" height="' + frameNumStr(h) + '"' +
       ' preserveAspectRatio="xMidYMid meet"' + (op < 1 ? ' opacity="' + frameNumStr(op) + '"' : '')
@@ -15555,7 +15602,7 @@ function frameEditImageOpaqueRaw(id, cb) {
       } catch (err) { if (cb) cb(null) }
     }
     im.onerror = function () { if (cb) cb(null) }
-    im.src = '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(id)
+    im.src = dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(id)
   } catch (err) { if (cb) cb(null) }
 }
 // v850：内容包围盒在缺缓存时**自动补量**，量完刷新一下虚线框/叠加层（不动几何、不打断拖动）
@@ -17434,6 +17481,14 @@ function bubbleAmountText() {
 function bubbleTodayText() {
   return (state.usageLabel || '今日已用') + ' ' + (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
 }
+function bubbleTokenTodayText() {
+  if (state.tokenStatus === 'ok') return fmtTokenCount(state.todayTokens)
+  return state.tokenStatus === 'error' ? '--' : '…'
+}
+function bubbleTokenCostText() {
+  if (state.tokenStatus === 'ok') return fmt(state.todayTokenCost, 'CNY')
+  return state.tokenStatus === 'error' ? '--' : '…'
+}
 // v782：赠金 / 充值余额两个数值模块的取数（与「总余额(充值金额+赠金)」同源：宿主余额返回体）。
 //   ⚠️ 两个数字**可能拿不到**（厂商没有该字段、或未登录账号）⇒ 显示 `—`，**不显示 0**
 //   —— 0 的意思是"确实没有了"，与"读不到"是两件事（记账也依赖这个区分）。
@@ -17816,6 +17871,8 @@ function bubbleContentTokenMap(m) {
   if (m.type === 'balance') {
     v = bubbleAmountText()
     map['balance_ds'] = v
+    map['token_ds'] = bubbleTokenTodayText()
+    map['cost_ds'] = bubbleTokenCostText()
   } else if (m.type === 'bonus') {
     // v782：赠金模块（{bonus_ds}）。取不到数 = '—'，不显示 0。
     map['bonus_ds'] = bubbleBonusText()
@@ -17825,6 +17882,8 @@ function bubbleContentTokenMap(m) {
   } else if (m.type === 'today') {
     v = (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
     map['expense_ds'] = v
+    map['token_ds'] = bubbleTokenTodayText()
+    map['cost_ds'] = bubbleTokenCostText()
   } else if (m.type === 'session') {
     // v768：对话名模块 —— {session} = 当前对话标题（按模块的「保留长度」截断）
     map['session'] = bubbleSessionText(m)
@@ -17867,6 +17926,10 @@ function bubbleTplHelpItems(m) {
   else if (m.type === 'peak' || m.type === 'nextpeak') {
     if (bubbleIsPeakCount(m)) add('countdown', '距下一时段倒计时 (HH:MM:SS)')
     else add('status', '高峰/空闲 状态文字(随显示样式变化)')
+  }
+  if (m.type === 'balance' || m.type === 'today') {
+    add('token_ds', '今日 Token（全部模型合计）')
+    add('cost_ds', '今日 DeepSeek 计价金额')
   }
   return arr
 }
@@ -18263,8 +18326,8 @@ function bubbleRowContentOf(mod) {
   if (mod.type === 'bonus') return { txt: bubbleContentText(mod, bubbleBonusText()), line: null }
   if (mod.type === 'recharge') return { txt: bubbleContentText(mod, bubbleRechargeText()), line: null }
   if (mod.type === 'today') {
-    var tv2 = bubbleIsModelMod(mod) ? apiModelTodayText(mod.modelId) : (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
-    return { txt: bubbleContentText(mod, '今日已用 ' + tv2), line: null }
+    var tv2 = bubbleIsModelMod(mod) ? apiModelTodayText(mod.modelId) : bubbleTokenTodayText()
+    return { txt: bubbleContentText(mod, '今日 Token ' + tv2), line: null }
   }
   if (mod.type === 'session') {
     // v768：对话名模块（自动内容 = 截断后的对话名；留空 tpl 时直接用自动内容）
@@ -18507,7 +18570,7 @@ function bubbleRowsTo(parentEl, mods) {
       // 显示大小:imgScale(0.1–1,相对最大宽 540u);未设置=满宽
       var scV2 = Number(md.imgScale)
       if (isFinite(scV2) && scV2 > 0) im.style.maxWidth = 'calc(var(--dshw-u) * ' + (540 * Math.max(0.1, Math.min(1, scV2))) + ')'
-      im.src = '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(pickId)
+      im.src = dshwUrl('/dsh-whale/bubble-img.png?id=') + encodeURIComponent(pickId)
       im.alt = ''
       im.draggable = false
       parentEl.appendChild(im)
@@ -19029,9 +19092,17 @@ function fmt(balance, currency) {
   var fixed = isFinite(num) ? num.toFixed(2) : '--'
   return currency === 'CNY' ? '¥ ' + fixed : fixed + ' ' + currency
 }
+function fmtTokenCount(n) {
+  n = Number(n) || 0
+  if (n >= 100000000) return (n / 100000000).toFixed(2).replace(/\.?0+$/, '') + '亿'
+  if (n >= 10000) return (n / 10000).toFixed(n >= 1000000 ? 1 : 2).replace(/\.?0+$/, '') + '万'
+  return String(Math.round(n))
+}
 function animateAmount(from, to, currency, duration) {
   // 消耗金额泡泡显示期间，余额数字滚动不触碰金额行
   if (costBubbleActive) return
+  // Token 主显示模式下，余额滚动不写主金额行
+  if (state.tokenStatus) return
   if (animId) cancelAnimationFrame(animId)
   if (from === null || !isFinite(from)) from = to
   if (from === to) {
@@ -19065,15 +19136,14 @@ function render() {
   // 消耗金额泡泡显示期间，余额渲染不覆盖其内容（金额行/标题行/提示行）
   if (costBubbleActive) return
   var amount, hint
-  if (state.status === 'error') {
-    amount = shown !== null ? fmt(shown, state.currency) : '--'
-    hint = state.message ? state.message.slice(0, 14) : '获取失败 · 点击重试'
-  } else if (state.balance === null) {
-    amount = shown !== null ? fmt(shown, state.currency) : '…'
-    hint = '加载中…'
+  if (state.tokenStatus === 'ok') {
+    amount = fmtTokenCount(state.todayTokens)
+    hint = 'DeepSeek ' + fmt(state.todayTokenCost, 'CNY')
+    amountEl.title = Number(state.todayTokens).toLocaleString('en-US') + ' tokens · DeepSeek ' + fmt(state.todayTokenCost, 'CNY')
   } else {
-    amount = shown !== null ? fmt(shown, state.currency) : fmt(state.balance, state.currency)
-    hint = (state.usageLabel || '今日已用') + ' ' + (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
+    amount = state.tokenStatus === 'error' ? '--' : '…'
+    hint = state.tokenStatus === 'error' ? '今日 Token 读取失败' : '今日 Token 加载中…'
+    amountEl.title = ''
   }
   amountEl.textContent = amount
   if (bubbleRandomActive && bubbleRandomLines) {
@@ -19224,7 +19294,43 @@ function balanceRetryLater() {
   balanceRetryLeft--
   setTimeout(function () { try { refresh(false) } catch (err) {} }, delay)
 }
+var tokenBusy = false
+var tokenLastFetchAt = 0
+function fetchTokenStats(force) {
+  var now = Date.now()
+  if (tokenBusy) return
+  if (!force && now - tokenLastFetchAt < 20000) return
+  tokenBusy = true
+  tokenLastFetchAt = now
+  fetch(USAGE_REC_URL, { cache: 'no-store' })
+    .then(function (r) { return r.json() })
+    .then(function (data) {
+      if (!data || !data.ok) throw new Error('usage records unavailable')
+      var day = (data.today && data.today.date) || ''
+      var events = (data.all && data.all.events) || []
+      var tokens = 0
+      var dsCost = 0
+      for (var i = 0; i < events.length; i++) {
+        var e = events[i] || {}
+        if (e.day !== day) continue
+        tokens += Number(e.tokens) || 0
+        if (/deepseek/i.test(String(e.model || ''))) dsCost += Number(e.cost) || 0
+      }
+      state.todayTokens = tokens
+      state.todayTokenCost = dsCost
+      state.todayTokenDay = day
+      state.tokenPartial = events.length >= 500 && !!events[events.length - 1] && events[events.length - 1].day === day
+      state.tokenStatus = 'ok'
+      render()
+    })
+    .catch(function () {
+      if (state.tokenStatus !== 'ok') state.tokenStatus = 'error'
+      render()
+    })
+    .finally(function () { tokenBusy = false })
+}
 function refresh(manual) {
+  try { fetchTokenStats(manual) } catch (err) {}
   if (busy) return
   busy = true
   if (animDelayTimer) { clearTimeout(animDelayTimer); animDelayTimer = null }
@@ -19731,10 +19837,10 @@ function soundSlotUrls(slot, groupId) {
     var g = audioGroups[i]
     if (g && g.id === gid) { frag = String(g[slot] || ''); break }
   }
-  var legacy = '/dsh-whale/sound/' + (slot === 'press' ? 'press' : 'release') + '.mp3?set=' + encodeURIComponent(gid)
+  var legacy = dshwUrl('/dsh-whale/sound/') + (slot === 'press' ? 'press' : 'release') + '.mp3?set=' + encodeURIComponent(gid)
   // 组信息还没到（audio.json 未返回）或找不到组 → 与旧行为完全一致，走老路由
   if (!frag) return { url: legacy, alt: '', empty: false }
-  return { url: '/dsh-whale/audio-fragment?id=' + encodeURIComponent(frag), alt: legacy, empty: false }
+  return { url: dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(frag), alt: legacy, empty: false }
 }
 function applySoundSet() {
   try {
@@ -19967,7 +20073,7 @@ function positionMenu() {
 }
 
 // —— 自定义角色：列表 / 选择 / 置顶 / 删除 / 导入裁剪 ——
-var ROLE_URL = '/dsh-whale/roles.json'
+var ROLE_URL = dshwUrl('/dsh-whale/roles.json')
 var currentRole = { id: 'default', name: '小鲸鱼', url: IMG_URL }
 var roleList = []
 function loadRoles() {
@@ -20098,7 +20204,7 @@ function applyRole(id, name, url) {
 }
 function roleUrl(id) {
   if (id === 'default') return IMG_URL
-  return '/dsh-whale/role-image.png?id=' + encodeURIComponent(id)
+  return dshwUrl('/dsh-whale/role-image.png?id=') + encodeURIComponent(id)
 }
 function toggleRolePanel() {
   if (rolePanel.classList.contains('dshwv-rolelist-open')) { closeRolePanel(); return }
@@ -20176,7 +20282,7 @@ function renderRolePanel() {
 }
 function togglePin(id, pinned) {
   try {
-    fetch('/dsh-whale/role-pin.json', {
+    fetch(dshwUrl('/dsh-whale/role-pin.json'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id, pinned: pinned }),
@@ -20213,7 +20319,7 @@ function deleteRole(id) {
   for (var i = 0; i < roleList.length; i++) if (roleList[i].id === id) { r = roleList[i]; break }
   showConfirm('确定删除角色「' + (r ? r.name : id) + '」吗？', function () {
     try {
-      fetch('/dsh-whale/role-delete.json', {
+      fetch(dshwUrl('/dsh-whale/role-delete.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: id }),
@@ -20510,7 +20616,7 @@ function confirmCrop() {
     var dataUrl = out.toDataURL('image/png')
     if (toBubbleImg) {
       // 同一个裁剪结果 → 泡泡图库（`bubbleImgList` / `/dsh-whale/bubble-img-upload.json`）
-      fetch('/dsh-whale/bubble-img-upload.json', {
+      fetch(dshwUrl('/dsh-whale/bubble-img-upload.json'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'upload', name: name, data: dataUrl }),
@@ -20562,7 +20668,7 @@ function hideCropModal() {
 }
 
 // —— 自定义音效组：列表 / 选择 / 置顶 / 删除 / 编辑 / 音频裁剪 ——
-var AUDIO_URL = '/dsh-whale/audio.json'
+var AUDIO_URL = dshwUrl('/dsh-whale/audio.json')
 var audioGroups = [] // [{id,name,press,release,preset,pinned}]
 var audioFragments = [] // [{id,name,preset}]
 var audioGroupPanelOpen = false
@@ -20866,19 +20972,19 @@ function audioEditPreviewEnsure(force) {
       if (audioEditPreviewRelease) { audioEditPreviewRelease.pause(); audioEditPreviewRelease = null }
     } catch (err) {}
     if (pressId) {
-      audioEditPreviewEl = dshwvSound('/dsh-whale/audio-fragment?id=' + encodeURIComponent(pressId))
+      audioEditPreviewEl = dshwvSound(dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(pressId))
       audioEditPreviewEl.preload = 'auto'
       audioEditPreviewEl.volume = soundVol
     }
     if (releaseId) {
-      audioEditPreviewRelease = dshwvSound('/dsh-whale/audio-fragment?id=' + encodeURIComponent(releaseId))
+      audioEditPreviewRelease = dshwvSound(dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(releaseId))
       audioEditPreviewRelease.preload = 'auto'
       audioEditPreviewRelease.volume = soundVol
     }
     // v745：试听也要预热（否则第一次点按试听同样是"按下音慢半拍"）
     dshwvWarm([
-      pressId ? '/dsh-whale/audio-fragment?id=' + encodeURIComponent(pressId) : '',
-      releaseId ? '/dsh-whale/audio-fragment?id=' + encodeURIComponent(releaseId) : '',
+      pressId ? dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(pressId) : '',
+      releaseId ? dshwUrl('/dsh-whale/audio-fragment?id=') + encodeURIComponent(releaseId) : '',
     ])
     audioEditPreviewReady = true
     return true
@@ -22210,7 +22316,7 @@ try {
 setInterval(function () { refresh(false); try { loadApiModels(null, true) } catch (err) {} }, REFRESH_MS)
 
 // —— 每轮对话消耗检测：轮询 last-turn.json，出现新 seq 时弹消耗金额泡泡 ——
-var LAST_TURN_URL = '/dsh-whale/last-turn.json'
+var LAST_TURN_URL = dshwUrl('/dsh-whale/last-turn.json')
 var lastCostSeq = 0
 var lastCostAligned = false
 // 用 localStorage 记忆已看过的 seq：刷新页面后不吞新轮次（配合 host 端 seq 持久化）
@@ -22223,15 +22329,31 @@ try {
 //   ① 记住对话名，供提示内容里的 {session} 占位符使用；
 //   ② 挂起**首次出现**时播对应音效（提问音 / 授权音），并在开启「冒泡提示」时弹泡泡；
 //   ③ 用 localStorage 记住已响过的挂起 id ⇒ **刷新页面不会为同一个未回答的提问重复响**。
-var WAIT_URL = '/dsh-whale/wait.json'
+var WAIT_URL = dshwUrl('/dsh-whale/wait.json')
 var WAIT_SOUND_KEY = 'dshw-wait-sound'
 var waitSeenId = ''
 function waitEventCfg(kind) {
   try { return ((usageSet || {}).events || {})[kind] || {} } catch (err) { return {} }
 }
-function pollWaitState() {
+var pollWaitStateBusy = false
+var pollLastTurnBusy = false
+var POLL_FETCH_TIMEOUT_MS = 5000
+function fetchPoll(url) {
+  var ctrl = null
+  var timer = null
   try {
-    fetch(WAIT_URL, { cache: 'no-store' })
+    ctrl = new AbortController()
+    timer = setTimeout(function () { try { ctrl.abort() } catch (err) {} }, POLL_FETCH_TIMEOUT_MS)
+  } catch (err) {}
+  return fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined }).finally(function () {
+    if (timer) { clearTimeout(timer); timer = null }
+  })
+}
+function pollWaitState() {
+  if (document.hidden || pollWaitStateBusy) return
+  pollWaitStateBusy = true
+  try {
+    fetchPoll(WAIT_URL)
       .then(function (r) { return r.json() })
       .then(function (d) {
         if (!d || !d.ok) return
@@ -22276,11 +22398,14 @@ function pollWaitState() {
         if (on && sel && ev.soundOn !== false) playBindingSound({ on: true, sel: sel }, ev)
       })
       .catch(function () {})
-  } catch (err) {}
+      .finally(function () { pollWaitStateBusy = false })
+  } catch (err) { pollWaitStateBusy = false }
 }
 function pollLastTurn() {
+  if (document.hidden || pollLastTurnBusy) return
+  pollLastTurnBusy = true
   try {
-    fetch(LAST_TURN_URL, { cache: 'no-store' })
+    fetchPoll(LAST_TURN_URL)
       .then(function (r) { return r.json() })
       .then(function (d) {
         if (!d || !d.ok || typeof d.seq !== 'number') return
@@ -22311,7 +22436,8 @@ function pollLastTurn() {
         }
       })
       .catch(function () {})
-  } catch (err) {}
+      .finally(function () { pollLastTurnBusy = false })
+  } catch (err) { pollLastTurnBusy = false }
 }
 setInterval(function () { pollLastTurn(); pollWaitState() }, 1000)
 }
