@@ -6,6 +6,7 @@
 >
 > 本分支的默认主显示改为「今日 Token + 仅 DeepSeek 模型按官方峰谷价计算的金额」，余额接口不可用时不再把挂件打成 `--`；并适配 fnOS 桌面反代 `/app/<app>/` 子路径（自动把 `/dsh-whale/*` 接口请求加上应用前缀）。
 > `0.4.4-fnos.2` 起兼容 **DSH 0.2.1-rc.5**：余额接口 401 时回落显示今日 Token、自动迁移账本里残留的 `{expense_ds}` 模板。**必须用 `github:` 源安装**，否则 DSH 升级会按 profile 的 `package.json` 重新拉上游 npm 版本、把本 fork 的前端补丁覆盖掉（见下方「在 DSH 0.2.1-rc.5 上的变更」）。
+> `0.4.4-fnos.3` 修正 `/dsh-whale/about.json` 上报的版本号：宿主 `lib/index.js` 里的版本是**硬编码常量**，此前一直报上游的 `0.4.2`，与 `package.json` 不一致。
 > 上游代码与美术素材归属不变，许可范围见 `LICENSE` 与 `PROVENANCE.md`。
 
 DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图 + **今日 Token + DeepSeek 计价金额** + 每轮对话消耗，并且**泡泡内容可以完全自定义**（点击序列、模块化排版、并列加权出泡、随机语句/随机图片）。标准 DSH bundle 插件，`dsh plugin` 一键安装，无需任何会话令牌。
@@ -57,16 +58,33 @@ DSH 0.2.1-rc.5 把余额接口收紧成只认官方凭据：这台机器的 `bal
 ```powershell
 # 先移除 npm 源的旧安装（同名包，混装会冲突）
 dsh plugin --profile web remove dsh-whale-widget
-# 再从 fork 装（装 main 当前状态；要钉版本就写成 ...Whale-Widget#v0.4.4-fnos.2）
+# 再从 fork 装（装 main 当前状态；要钉版本就写成 ...Whale-Widget#v0.4.4-fnos.3）
 dsh plugin --profile web add github:Maluslock/DeepSeek-Balance-Whale-Widget
 ```
 
 装完核对 profile 里记录的来源确实是 `github:` 而不是 `0.4.2`（`profiles/web/package.json` 的 `dependencies`）。这样再升级 DSH，pnpm 会按 GitHub 源重装本 fork，补丁不会被上游覆盖。
 
-### 6. 版本与已知限制
+### 6. `0.4.4-fnos.3`：修正 `/dsh-whale/about.json` 的版本上报
 
-- fork 版本：`0.4.4-fnos.2`（上一版 `0.4.3-fnos.1`）。
-- 只改前端资源，宿主 `lib/index.js` 不需要重启；更新后浏览器 `Ctrl+F5` 或强刷即可。
+`0.4.4-fnos.2` 装好之后挂件本身是新的，但 `/dsh-whale/about.json` 仍然报 `version: "0.4.2"`。原因是这个字段**不读 `package.json`**，而是宿主 `lib/index.js` 里的硬编码常量：
+
+- `lib/index.js` 顶部 `const BUILD_VERSION = '0.4.2'`，`aboutPayload()` 直接 `version: BUILD_VERSION`；
+- 另外两处 API 负载（`usage-records.json`、`balance/peak`）也各自写了一份 `version: '0.4.2'` 字面量；
+- `/dsh-whale/about.json` 的 `hostVersionLiterals` 用正则 `version: '([\d.]+)'` 从自身源码里扫这些字面量，供前端做「宿主版本与前端一致」的自检。
+
+于是 `0.4.4-fnos.3` 做了四处修改（`lib/index.js`）：
+
+1. `const BUILD_VERSION = '0.4.2'` → `'0.4.4-fnos.3'`；
+2. `usage-records.json` 负载里的 `version: '0.4.2'` → `'0.4.4-fnos.3'`；
+3. `balance/peak` 负载里的 `version: '0.4.2'` → `'0.4.4-fnos.3'`；
+4. `hostVersionLiterals` 的正则放宽为 `/version: '([0-9][^']*)'/g`（原来的 `[\d.]+` 只认数字和点，遇到 `0.4.4-fnos.3` 会**一个都匹配不到**，清单变空、前端自检直接判「不一致」），并把 `BUILD_VERSION` 常量本身也放进清单，常量与负载字面量一旦漂移就能被检出。
+
+改完之后 `about.json` 的 `plugin.version`、`hostVersionLiterals`（三项）全部等于 `0.4.4-fnos.3`，前端自检显示一致。这一版改的是**宿主** `lib/index.js`，和其它版本不同 —— 装完**必须重启 `dsh web`**（`dsh restart` 或 fnOS 应用管理器里重启）才会生效；只强刷浏览器不够。
+
+### 7. 版本与已知限制
+
+- fork 版本：`0.4.4-fnos.3`（上一版 `0.4.4-fnos.2`，再上一版 `0.4.3-fnos.1`）。
+- `0.4.4-fnos.2` 及更早只改前端资源，浏览器强刷即可；**`0.4.4-fnos.3` 改到了宿主 `lib/index.js`，必须重启 `dsh web`**（重启后浏览器再强刷一次）。
 - 已知限制：`/dsh-whale/usage-records.json` 的 `all.events` 只返回最近 500 条事件；如果单日事件数超过 500，token 可能低估（前端保留 `tokenPartial` 标记，后续可以补 UI 提示）。
 - 已知限制：余额 401 回落显示的是**最近一次成功**的今日 token 数；如果 `usage-records.json` 本身也失败（网络断、宿主未启动），仍会显示 `--` 与「今日 Token 读取失败」，这是预期行为。
 - 没有改：余额获取逻辑、账本结构、DeepSeek 定价表、宿主路由和历史数据；上游的 MIT 许可与 `PROVENANCE.md` 素材说明保持不变。

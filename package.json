@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-widget",
-  "version": "0.4.4-fnos.2",
+  "version": "0.4.4-fnos.3",
   "description": "DSH Web 界面右下角的 DeepSeek 用量小鲸鱼挂件（Maluslock fork）：今日 Token + DeepSeek 计价金额、峰谷定价、自定义泡泡点击序列、逐行样式、悬浮快捷编辑、音效与每轮消耗、自定义角色/动图/音效、余额 401 时回落显示今日 Token、账本 {expense_ds} 模板迁移、fnOS /app 子路径适配",
   "keywords": [
     "dsh",
