@@ -2258,14 +2258,24 @@ menuBox.appendChild(rowRes)
 // ===== 用量记录(主菜单内的子界面,不跳新页面)+ “更多消费记录”窗口 =====
 var USAGE_REC_URL = dshwUrl('/dsh-whale/usage-records.json')
 var usageSet = null // {taskEnd,alert,budget} 用量设置缓存
+// v0.4.3：账本残留模板迁移 —— 宿主默认仍是 '今日已用 {expense_ds}'，老安装会把这份
+//   默认写进 .dshw-usage.json；本定制的「今日」行语义已改成 token 数，不迁移就会渲染旧文案。
+//   · '{expense_ds}' → '{token_ds}'（旧占位符等价替换，保留用户其余排版）
+//   · 仍带「今日已用 / 今日消耗 / 今日用量 / 今日花费 / 今日费用」字样 → 规范成 '今日 Token {token_ds}'
+//   已是规范写法或自定义写法（如 '{token_ds} tokens'）不动。
+function normalizeTurnCostTodayModule(m) {
+  if (!m || m.type !== 'today') return
+  var before = String(m.tpl || '')
+  var tpl = before
+  if (tpl.indexOf('{expense_ds}') >= 0) tpl = tpl.split('{expense_ds}').join('{token_ds}')
+  if (tpl && /今日已用|今日消耗|今日用量|今日花费|今日费用/.test(tpl)) tpl = '今日 Token {token_ds}'
+  if (tpl !== before) m.tpl = tpl
+}
 function normalizeUsageSettings(s) {
   try {
     var tc = s && s.turnCost
     if (tc && Array.isArray(tc.lines)) {
-      for (var i = 0; i < tc.lines.length; i++) {
-        var m = tc.lines[i] || {}
-        if (m.type === 'today' && /今日已用/.test(String(m.tpl || ''))) m.tpl = '今日 Token {token_ds}'
-      }
+      for (var i = 0; i < tc.lines.length; i++) normalizeTurnCostTodayModule(tc.lines[i])
     }
   } catch (err) {}
   return s
@@ -17481,12 +17491,27 @@ function bubbleAmountText() {
 function bubbleTodayText() {
   return (state.usageLabel || '今日已用') + ' ' + (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.todayUsageCurrency || state.currency) : '--')
 }
+// v0.4.3：token 可用判定 —— 余额接口 401 时用它决定是否回落显示今日 Token。
+//   state.todayTokens 只在 fetchTokenStats 成功时写入、失败时不清空 ⇒ 这里拿到的是最近一次成功值。
+function tokenFallbackReady() {
+  var t = state && state.todayTokens
+  if (t === null || t === undefined || t === '') return false
+  var n = Number(t)
+  return isFinite(n) && n > 0
+}
+// 今日 DeepSeek 计价金额（仅 DeepSeek 模型的 cost 合计）；缺数给 '--'，不写 0.00
+function tokenFallbackCostText() {
+  var c = state && state.todayTokenCost
+  if (c === null || c === undefined || c === '') return '--'
+  var n = Number(c)
+  return isFinite(n) ? fmt(n, 'CNY') : '--'
+}
 function bubbleTokenTodayText() {
-  if (state.tokenStatus === 'ok') return fmtTokenCount(state.todayTokens)
+  if (state.tokenStatus === 'ok' || tokenFallbackReady()) return fmtTokenCount(state.todayTokens)
   return state.tokenStatus === 'error' ? '--' : '…'
 }
 function bubbleTokenCostText() {
-  if (state.tokenStatus === 'ok') return fmt(state.todayTokenCost, 'CNY')
+  if (state.tokenStatus === 'ok' || tokenFallbackReady()) return tokenFallbackCostText()
   return state.tokenStatus === 'error' ? '--' : '…'
 }
 // v782：赠金 / 充值余额两个数值模块的取数（与「总余额(充值金额+赠金)」同源：宿主余额返回体）。
@@ -19136,10 +19161,13 @@ function render() {
   // 消耗金额泡泡显示期间，余额渲染不覆盖其内容（金额行/标题行/提示行）
   if (costBubbleActive) return
   var amount, hint
-  if (state.tokenStatus === 'ok') {
+  // v0.4.3：余额接口失败（401 / 无 key / 超时）时，只要今日 Token 已经拿到，
+  //   就继续走 token 主显示兜底 —— 不能因为余额读不到就让三行显示 `--`。
+  if (state.tokenStatus === 'ok' || tokenFallbackReady()) {
     amount = fmtTokenCount(state.todayTokens)
-    hint = 'DeepSeek ' + fmt(state.todayTokenCost, 'CNY')
-    amountEl.title = Number(state.todayTokens).toLocaleString('en-US') + ' tokens · DeepSeek ' + fmt(state.todayTokenCost, 'CNY')
+    hint = 'DeepSeek ' + tokenFallbackCostText()
+    amountEl.title = Number(state.todayTokens).toLocaleString('en-US') + ' tokens · DeepSeek ' + tokenFallbackCostText()
+    labelEl.textContent = '今日 Token'
   } else {
     amount = state.tokenStatus === 'error' ? '--' : '…'
     hint = state.tokenStatus === 'error' ? '今日 Token 读取失败' : '今日 Token 加载中…'

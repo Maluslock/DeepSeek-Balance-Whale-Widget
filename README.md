@@ -5,6 +5,7 @@
 > **Maluslock fork（基于上游 `MeteorNOX/DeepSeek-Balance-Whale-Widget` v0.4.2）**
 >
 > 本分支的默认主显示改为「今日 Token + 仅 DeepSeek 模型按官方峰谷价计算的金额」，余额接口不可用时不再把挂件打成 `--`；并适配 fnOS 桌面反代 `/app/<app>/` 子路径（自动把 `/dsh-whale/*` 接口请求加上应用前缀）。
+> `0.4.4-fnos.2` 起兼容 **DSH 0.2.1-rc.5**：余额接口 401 时回落显示今日 Token、自动迁移账本里残留的 `{expense_ds}` 模板。**必须用 `github:` 源安装**，否则 DSH 升级会按 profile 的 `package.json` 重新拉上游 npm 版本、把本 fork 的前端补丁覆盖掉（见下方「在 DSH 0.2.1-rc.5 上的变更」）。
 > 上游代码与美术素材归属不变，许可范围见 `LICENSE` 与 `PROVENANCE.md`。
 
 DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图 + **今日 Token + DeepSeek 计价金额** + 每轮对话消耗，并且**泡泡内容可以完全自定义**（点击序列、模块化排版、并列加权出泡、随机语句/随机图片）。标准 DSH bundle 插件，`dsh plugin` 一键安装，无需任何会话令牌。
@@ -26,7 +27,7 @@ DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图
 - 首次点击泡泡改为：`今日 Token` + token 数 + `DeepSeek ¥ x.xx` + 原有峰谷模块；不再显示余额和「今日已用」。
 - 每轮对话消耗泡泡的第三行从「今日已用 ¥…」改为「今日 Token …」。
 - 新增模板占位符 `{token_ds}`（今日全部模型 token）和 `{cost_ds}`（今日 DeepSeek 计价金额），模块库里的「今日 Token」可直接使用。
-- 已保存的旧 `usage-settings.json` 会在前端加载时自动迁移：只把 `turnCost.lines` 里 `type=today` 且文案含「今日已用」的模块改成「今日 Token {token_ds}」，不改其它设置。
+- 已保存的旧 `usage-settings.json` / `.dshw-usage.json` 会在前端加载时自动迁移：`turnCost.lines` 里 `type=today` 的模块，`{expense_ds}` → `{token_ds}`，仍带「今日已用 / 今日消耗 / 今日用量 / 今日花费 / 今日费用」的规范成「今日 Token {token_ds}」，不改其它设置（`0.4.4-fnos.2` 起覆盖面扩大到 `{expense_ds}` 占位符，旧版只处理「今日已用」字样）。
 
 ### 3. 适配 fnOS `/app/<app>/` 子路径
 
@@ -39,11 +40,35 @@ DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图
 - 新增 `fetchPoll()`：5 秒 `AbortController` 超时；`document.hidden` 时暂停轮询。
 - 这部分只改前端，不改变宿主 API；解决浏览器标签页长时间打开、网络抖动时请求队列堆积导致的 `--`。
 
-### 5. 版本与已知限制
+### 5. 在 DSH 0.2.1-rc.5 上的变更（`0.4.4-fnos.2`）
 
-- fork 版本：`0.4.3-fnos.1`。
+DSH 0.2.1-rc.5 把余额接口收紧成只认官方凭据：这台机器的 `balance.json` 长期返回 `{ok:false, code:"BOTH_FAILED"}`（HTTP 401，既没有 `DEEPSEEK_API_KEY`、DSH 也没登录 DeepSeek 账号）。旧行为下余额一失败，主显示就整体退化成 `--`，明明 token 数据是好的。本版本做了三件事：
+
+1. **余额 401 时回落显示今日 Token**：主显示条件从「余额 ok」放宽为「余额 ok **或** 今日 Token 已拿到」。只要 `todayTokens > 0`，就照常显示 `今日 Token / 8414.5万 / DeepSeek ¥ 15.75` 三行，`title` 里给精确 token 数与金额；只有连 token 都读不到（`usage-records.json` 也失败）才回到 `--` / 「今日 Token 读取失败」。
+   - 判定收敛在一个 `tokenFallbackReady()`：`todayTokens` 非空且 `Number` 有限且大于 0；`state.todayTokens` 只在 `fetchTokenStats` 成功时写入、失败时**不清空**，所以回落用的是最近一次成功值。
+   - 金额走 `tokenFallbackCostText()`：缺数给 `--` 而不是 `¥ 0.00`（避免 `Number(null) === 0` 骗过格式化）。
+   - 泡泡占位符同步修好：`{token_ds}` / `{cost_ds}` 在 401 态下也走同一判定，不再渲染成 `--`。
+2. **账本残留模板迁移**：老安装把宿主默认的 `今日已用 {expense_ds}` 写进了 `.dshw-usage.json` 的 `settings.turnCost.lines`，本定制的「今日」行语义早已改成 token 数，不迁移就会一直渲染旧文案。现在加载设置时对 `type === 'today'` 的模块统一归一化：
+   - `{expense_ds}` → `{token_ds}`（只做占位符等价替换，保留用户其余排版，如 `{expense_ds} tokens` → `{token_ds} tokens`）；
+   - 仍带「今日已用 / 今日消耗 / 今日用量 / 今日花费 / 今日费用」字样的 → 规范成 `今日 Token {token_ds}`；
+   - 已是规范写法或自定义写法（如 `DeepSeek {cost_ds}`）不动；`type` 不是 `today` 的模块一律不动。
+3. **安装源必须是 `github:`**：`0.4.2` 那次是把改动直接打进 `node_modules/dsh-whale-widget/assets/whale-widget.js`。DSH 升级（含 rc.5 这种预发布升级）会按 profile 的 `package.json` 重新解析依赖，pnpm 从 **npm 上游 0.4.2** 重装后，本地补丁就被整份覆盖、挂件回到「余额一失败就 `--`」。所以要用 fork 源安装，让 profile 记录指向本仓库：
+
+```powershell
+# 先移除 npm 源的旧安装（同名包，混装会冲突）
+dsh plugin --profile web remove dsh-whale-widget
+# 再从 fork 装（装 main 当前状态；要钉版本就写成 ...Whale-Widget#v0.4.4-fnos.2）
+dsh plugin --profile web add github:Maluslock/DeepSeek-Balance-Whale-Widget
+```
+
+装完核对 profile 里记录的来源确实是 `github:` 而不是 `0.4.2`（`profiles/web/package.json` 的 `dependencies`）。这样再升级 DSH，pnpm 会按 GitHub 源重装本 fork，补丁不会被上游覆盖。
+
+### 6. 版本与已知限制
+
+- fork 版本：`0.4.4-fnos.2`（上一版 `0.4.3-fnos.1`）。
 - 只改前端资源，宿主 `lib/index.js` 不需要重启；更新后浏览器 `Ctrl+F5` 或强刷即可。
 - 已知限制：`/dsh-whale/usage-records.json` 的 `all.events` 只返回最近 500 条事件；如果单日事件数超过 500，token 可能低估（前端保留 `tokenPartial` 标记，后续可以补 UI 提示）。
+- 已知限制：余额 401 回落显示的是**最近一次成功**的今日 token 数；如果 `usage-records.json` 本身也失败（网络断、宿主未启动），仍会显示 `--` 与「今日 Token 读取失败」，这是预期行为。
 - 没有改：余额获取逻辑、账本结构、DeepSeek 定价表、宿主路由和历史数据；上游的 MIT 许可与 `PROVENANCE.md` 素材说明保持不变。
 
 > ⚠️ **Codex 版小鲸鱼已迁至独立仓库** → <https://github.com/Yang-huai406/Codex-Whale-Public>（**已安装用户无需重装**；详见下方「两条分支怎么选」）
